@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "sales-prediction"
+version = "0.1.0"
+description = ""
+authors = ["Oleh Toporkov <oleh.toporkov@gmail.com>"]
+readme = "README.md"
+packages = [{include = "sales_prediction"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+polars = "^0.20.30"
+scikit-learn = "^1.5.0"
+
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
