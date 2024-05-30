@@ -1,16 +1,19 @@
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 import polars as pl
 import os
 from holidays import country_holidays
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
 
 class DatasetGenerator:
     NUM_LAGS: int = 3
     WINDOW_SIZE: int = 5
     NUM_CLUSTERS: int = 5
+
+    TARGET: str = 'sales_quantity'
 
     _scaler: Optional[StandardScaler] = None
     _kmeans: Optional[KMeans] = None
@@ -48,11 +51,20 @@ class DatasetGenerator:
             self._data = self._data.drop_nulls()
         if apply_norm:
             schema = self._data.schema
-            DatasetGenerator._scaler = StandardScaler()
-            self._data = DatasetGenerator._scaler.fit_transform(self._data)
+            # TODO: apply more sohisticated scaler, that will handle both categorical and numerical features
+            self._scaler = StandardScaler()
+            self._data = self._scaler.fit_transform(self._data)
             self._data = pl.DataFrame(self._data, schema={i: pl.Float64 for i in schema.keys()})
         self._data = self._data.drop('date').sample(fraction=1, shuffle=True)
+
+    def get_full_train_data(self) -> Tuple[pl.DataFrame, pl.Series]:
+        return self._data.drop(self.TARGET), self._data[self.TARGET]
     
+    def split_train_test(self) -> Tuple[Tuple[pl.DataFrame, pl.Series], Tuple[pl.DataFrame, pl.Series]]:
+        X, y = self._data.drop(self.TARGET), self._data[self.TARGET]
+        x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        return (x_train, y_train), (x_test, y_test)
+
     @property
     def normalizer(self) -> StandardScaler:
         if self._scaler is None:
