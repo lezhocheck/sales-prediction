@@ -68,7 +68,7 @@ class DatasetGenerator:
     
     def split_train_test(self) -> Tuple[Tuple[pl.DataFrame, pl.Series], Tuple[pl.DataFrame, pl.Series]]:
         X, y = self._data.drop(self.TARGET), self._data[self.TARGET]
-        x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.12, shuffle=False)
         return (x_train, y_train), (x_test, y_test)
 
     @property

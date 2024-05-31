@@ -109,19 +109,32 @@ class LgbmPredictor(Predictor):
         def objective(trial: optuna.Trial) -> None:
             reg = lgb.LGBMRegressor(
                 objective='regression',
-                boosting_type='gbt',
-                n_estimators=trial.suggest_int('n_estimators', 100, 1000),
+                boosting_type='gbdt',
+                verbose=-1,
+                n_estimators=trial.suggest_int('n_estimators', 100, 2000),
                 learning_rate=trial.suggest_float('learning_rate', 1e-3, 1e-1, log=True),
                 num_leaves=trial.suggest_int('num_leaves', 2, 256),
                 max_depth=trial.suggest_int('max_depth', 1, 64),
                 min_data_in_leaf=trial.suggest_int('min_data_in_leaf', 10, 100),
                 lambda_l1=trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
-                lambda_l2=trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True)
+                lambda_l2=trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
+                feature_fraction=trial.suggest_float('feature_fraction', 0.4, 1.0),
+                bagging_fraction=trial.suggest_float('bagging_fraction', 0.4, 1.0),
+                bagging_freq=trial.suggest_int('bagging_freq', 1, 7),
+                min_gain_to_split=trial.suggest_float('min_gain_to_split', 0.0, 1.0),
+                max_bin=trial.suggest_int('max_bin', 10, 255),
+                min_sum_hessian_in_leaf=trial.suggest_float('min_sum_hessian_in_leaf', 1e-5, 10)
             )
             loss = cross_val_score(reg, X, y, n_jobs=-1, cv=3, scoring=self.OPTIMIZATION_LOSS)
             return loss.mean()
         study = optuna.create_study(direction='maximize')
         study.optimize(objective, n_jobs=-1, n_trials=self.OPTIMIZATION_STEPS)
         best_params = study.best_params
-        self._estimator = lgb.LGBMRegressor(**best_params, n_jobs=-1)
-        self._estimator = self._estimator.fit(X, y)
+        self._estimator = lgb.LGBMRegressor(**best_params, n_jobs=-1, verbose=-1)
+        self._estimator = self._estimator.fit(X.to_pandas(), y.to_pandas())
+    
+    def predict_single_sample(self, sample: Dict[str, Any]) -> float:
+        if self._estimator is None:
+            raise ValueError('Model was not fitted')
+        X = pl.DataFrame(sample).select(self._estimator.booster_.feature_name())
+        return self._estimator.predict(X)[0]
