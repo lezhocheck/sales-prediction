@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, Dict
 import numpy as np
 import polars as pl
 import os
@@ -6,6 +6,8 @@ from holidays import country_holidays
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from datetime import datetime
+from copy import deepcopy
 
 
 class DatasetGenerator:
@@ -30,7 +32,7 @@ class DatasetGenerator:
         
         path = os.path.abspath(src_data_path)
         assert os.path.isfile(path), f'Specified file {src_data_path} does not exist'
-        holidays = country_holidays('UA')
+        self._holidays = set(country_holidays('UA'))
         self._data = pl.read_csv(
             src_data_path, 
             columns=['date', 'category_id', 'sku_id', 'sales_price', 'sales_quantity']
@@ -39,14 +41,18 @@ class DatasetGenerator:
             pl.col('date').dt.month().alias('month'),
             pl.col('date').dt.day().alias('day'),
             pl.col('date').dt.weekday().alias('weekday'),
-            pl.col('date').is_in(set(holidays)).alias('is_ukrainian_holiday')
+            pl.col('date').is_in(self._holidays).alias('is_ukrainian_holiday')
         )
+        self._generate_lags = generate_lags
+        self._generate_sma = generate_sma
+        self._generate_clusters = generate_clusters
+        self._apply_norm = apply_norm
         if generate_lags:
-            self._data = self._generate_lags(self._data)
+            self._data = self._build_lags(self._data)
         if generate_sma:
-            self._data = self._generate_sma(self._data)
+            self._data = self._build_sma(self._data)
         if generate_clusters:
-            self._data = self._generate_cluster_id_feature(self._data)
+            self._data = self._build_cluster_id_feature(self._data)
         if remove_nulls:
             self._data = self._data.drop_nulls()
         if apply_norm:
@@ -78,7 +84,7 @@ class DatasetGenerator:
         return self._kmeans
 
     @classmethod
-    def _generate_lags(cls, data: pl.DataFrame) -> pl.DataFrame:
+    def _build_lags(cls, data: pl.DataFrame) -> pl.DataFrame:
         lag_agg_sku_id = data.group_by(['sku_id', 'date']).agg(
             pl.col('sales_price').mean(),
             pl.col('sales_quantity').sum()
@@ -98,9 +104,9 @@ class DatasetGenerator:
                 ).with_columns(pl.lit(sku_id).cast(pl.Int64).alias('sku_id'))
             )
         return data.join(pl.concat(merged_skus), on=['sku_id', 'date'])
-
+    
     @classmethod
-    def _generate_sma(cls, data: pl.DataFrame) -> pl.DataFrame:
+    def _build_sma(cls, data: pl.DataFrame) -> pl.DataFrame:
         categories_agg = data.group_by(['category_id', 'date']).agg(
             pl.col('sales_price').mean(),
             pl.col('sales_quantity').sum()
@@ -121,15 +127,19 @@ class DatasetGenerator:
         return data.join(pl.concat(sma_merged, how='vertical'), on=['category_id', 'date'])
 
     @classmethod
-    def _generate_cluster_id_feature(cls, data: pl.DataFrame) -> pl.DataFrame:
+    def _build_cluster_id_feature(cls, data: pl.DataFrame) -> pl.DataFrame:
         mask = np.any(data.select(pl.all().is_null()).to_numpy(), axis=1)
         nulls = data.filter(pl.Series(mask))
         features = data.drop_nulls()
-        scaler = StandardScaler()
-        scaled = scaler.fit_transform(features)
+        f_date, f_target = features['date'], features[cls.TARGET]
+        features = features.drop('date', cls.TARGET)
+        cls._kmeans_scaler = StandardScaler()
+        scaled = cls._kmeans_scaler.fit_transform(features)
         cls._kmeans = KMeans(n_clusters=cls.NUM_CLUSTERS)
-        clusters = cls._kmeans.fit_predict(scaled)
+        clusters = cls._kmeans.fit_predict(pl.DataFrame(scaled, schema=features.columns))
         processed_dataset = features.with_columns(
-            pl.Series(values=clusters).alias('cluster_id')
-        )
+            pl.Series(values=clusters).alias('cluster_id'),
+            f_date,
+            f_target
+        ).select(*nulls.columns, 'cluster_id')
         return pl.concat([processed_dataset, nulls.with_columns(pl.lit(None).alias('cluster_id'))])

@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import polars as pl
 import optuna
 from sklearn.base import BaseEstimator
@@ -33,12 +33,12 @@ class Predictor(metaclass=ABCMeta):
 
     def train(self, X: pl.DataFrame, y: pl.Series, force: bool = False) -> None:
         assert len(X) == len(y), 'Lengths of X and y are different'
-        if self._estimator is not None and force:
-            print('Model already trained. Starting retraining...')
-        elif not force:
+        if self._estimator is None or force:
+            if force:
+                print('Model already trained. Starting retraining...')
+            self._train(X, y)
+        else:
             print('Model already trained. Skipping...')
-            return
-        self._train(X, y)
 
     @abstractmethod
     def _train(self, X: pl.DataFrame, y: pl.Series) -> None:
@@ -48,6 +48,12 @@ class Predictor(metaclass=ABCMeta):
         if self._estimator is None:
             raise ValueError('Model was not fitted')
         return pl.Series(name='prediction', values=self._estimator.predict(X))
+    
+    def predict_single_sample(self, sample: Dict[str, Any]) -> float:
+        if self._estimator is None:
+            raise ValueError('Model was not fitted')
+        X = pl.DataFrame(sample).select(self._estimator.feature_names_in_)
+        return self._estimator.predict(X)[0]
 
     def eval(self, X: pl.DataFrame, y: pl.Series, apply_cv: bool = True) -> Dict[str, float]:
         if self._estimator is None:
@@ -69,7 +75,7 @@ class Predictor(metaclass=ABCMeta):
     def save(self, path: str) -> None:
         if self._estimator is None:
             raise ValueError('Model was not fitted')
-        path = os.path.abspath()
+        path = os.path.abspath(path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.isfile(path):
             print(f'Overriding {path}')
